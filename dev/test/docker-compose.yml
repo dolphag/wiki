@@ -1,0 +1,65 @@
+# Boots the wiki from this source tree for a manual check, on a throwaway database.
+#
+#   docker compose -f dev/test/docker-compose.yml up
+#
+# The first start installs the dependencies and builds the frontend into ../assets, which takes a few
+# minutes (the Vite build is given up to 8 GB of memory). Later starts reuse the node_modules volumes
+# and only rebuild the frontend. Then open http://localhost:3000 and sign in as
+# admin@example.com / 12345678.
+#
+# Everything is thrown away with:
+#
+#   docker compose -f dev/test/docker-compose.yml down -v
+#
+# Not for production: the database password is public, and nothing here is hardened.
+
+name: wiki-test
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: wiki
+      POSTGRES_PASSWORD: wikijsrocks
+      POSTGRES_DB: wiki
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wiki -d wiki']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    image: node:26
+    working_dir: /wiki
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    environment:
+      # -> `dev/build/config.yml` is the production image's config, and reads everything below
+      CONFIG_FILE: dev/build/config.yml
+      DB_HOST: db
+      DB_PORT: '5432'
+      DB_USER: wiki
+      DB_PASS: wikijsrocks
+      DB_NAME: wiki
+      DB_SSL: 'false'
+    volumes:
+      - ../..:/wiki
+      # -> Keeps the container's (Linux) dependencies out of the host checkout
+      - backend-modules:/wiki/backend/node_modules
+      - frontend-modules:/wiki/frontend/node_modules
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        npm ci --prefix backend
+        npm ci --prefix frontend
+        npm run build --prefix frontend
+        exec node --no-experimental-webstorage backend
+
+volumes:
+  backend-modules:
+  frontend-modules:
